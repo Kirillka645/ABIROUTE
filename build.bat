@@ -33,7 +33,7 @@ echo === Installing dependencies ===
 if errorlevel 1 goto fail
 
 echo === Building ABIRoute.exe ===
-!PY! -m PyInstaller --noconfirm --clean --onefile --windowed --uac-admin --name ABIRoute --icon icon.ico --add-data "icon.ico;." abi_route.py
+!PY! -m PyInstaller --noconfirm --clean ABIRoute.spec
 if errorlevel 1 goto fail
 
 echo.

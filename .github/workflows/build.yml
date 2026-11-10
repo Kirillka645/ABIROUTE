@@ -8,6 +8,30 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: pip install -r requirements.txt pyinstaller
-      - run: pyinstaller --noconfirm --onefile --windowed --uac-admin --name ABIRoute --icon icon.ico --add-data "icon.ico;." abi_route.py
+      - name: Тесты
+        run: python -m unittest discover -s tests -v
+      - name: Сборка exe
+        run: pyinstaller --noconfirm --clean ABIRoute.spec
+      # Запуск самого exe: все модули попали в сборку, окно открывается (раннеры GitHub без UAC)
+      - name: Самопроверка exe
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          $out = Join-Path $PWD 'selftest.txt'
+          $p = Start-Process dist\ABIRoute.exe -ArgumentList '--selftest', $out -Wait -PassThru
+          Get-Content $out
+          if ($p.ExitCode -ne 0) { exit 1 }
       - uses: actions/upload-artifact@v4
         with: { name: ABIRoute, path: dist/ABIRoute.exe }
+      # Снимки интерфейса на настоящей Windows (демо-данные, без сети и туннеля)
+      - name: Экран 1920×1080
+        continue-on-error: true
+        shell: pwsh
+        run: Set-DisplayResolution -Width 1920 -Height 1080 -Force
+      - name: Снимки интерфейса
+        timeout-minutes: 5
+        run: |
+          pip install pillow
+          python abi_route.py --screenshot screenshots
+      - uses: actions/upload-artifact@v4
+        with: { name: screenshots, path: screenshots/ }
