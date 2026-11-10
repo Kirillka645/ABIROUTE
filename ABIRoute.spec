@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-
+# Сборка exe: build.bat или  pyinstaller --noconfirm --clean ABIRoute.spec
 
 a = Analysis(
     ['abi_route.py'],
@@ -10,7 +10,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['PIL'],  # нужен только для снимков интерфейса (--screenshot), не для работы
     noarchive=False,
     optimize=0,
 )
