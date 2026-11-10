@@ -1,45 +1,25 @@
 # -*- coding: utf-8 -*-
-"""
-ABI Route — WARP-туннель только для Arena Breakout Infinite.
-
-* Регистрирует бесплатный профиль Cloudflare WARP (аналог "warp generator").
-* Ищет лучший эндпоинт WARP реальным WireGuard-рукопожатием (UDP), а не ICMP.
-* Генерирует split-tunnel конфиг: через WARP идут ТОЛЬКО IP-адреса серверов игры.
-* Сам находит IP серверов игры по подключениям процесса игры и дописывает маршруты.
-* Туннель работает как служба Windows (AmneziaWG или WireGuard) — в фоне.
-* v2: автосмена сервера WARP при сбое, точный TCP-пинг с таблицей сравнения,
-  готовые списки серверов игры, новый интерфейс.
-"""
-import base64
-import ctypes
-import hashlib
-import hmac
+"""Интерфейс ABI Route (tkinter, тёмная тема, 4 вкладки)."""
 import ipaddress
 import json
+import logging
 import os
 import queue
-import random
-import re
-import secrets
-import socket
 import statistics
-import struct
-import subprocess
-import sys
 import threading
 import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
 
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
-from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
-
-try:
-    import psutil
-except ImportError:  # pragma: no cover
-    psutil = None
+from . import APP_NAME, REPO_URL, __version__
+from . import learn
+from .learn import game_remote_endpoints
+from .netping import best_ping, check_targets, in_nets, wait_tunnel
+from .settings import load_settings, save_settings
+from .tunnel import (build_conf, find_client, normalize_ranges, tunnel_down,
+                     tunnel_running, tunnel_stats, tunnel_up)
+from .util import fmt_bytes, is_admin, resource, split_endpoint
+from .warp import WARP_IPS, WARP_PORTS, probe_endpoints, scan_endpoints, warp_register
 
 try:
     import tkinter as tk
@@ -48,434 +28,16 @@ try:
 except ImportError:  # позволяет тестировать ядро без GUI
     tk = None
 
-APP_NAME = "ABI Route"
-TUNNEL = "ABIRoute"
-DATA_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ABIRoute")
-SETTINGS_PATH = os.path.join(DATA_DIR, "settings.json")
-CONF_PATH = os.path.join(DATA_DIR, TUNNEL + ".conf")
-NOWIN = 0x08000000 if os.name == "nt" else 0
-
-DEFAULTS = {
-    "warp": None,
-    "endpoint": "162.159.192.1:2408",
-    "game_processes": ["UAGame.exe", "ArenaBreakoutInfinite.exe", "ArenaBreakoutInfiniteLauncher.exe"],
-    "ranges": [],
-    "seen_ips": [],
-    "auto_learn": True,
-    "prefix": 24,
-    "awg": {"Jc": 4, "Jmin": 40, "Jmax": 70},
-    "mtu": 1280,
-    "failover": True,
-    "endpoint_ms": None,
-    "endpoint_list": [],
-    "ignore_ranges": ["92.122.0.0/15"],
-    "tcp_ports": {},
-    "ping": {},
-    "verify_targets": [],
-}
-VERSION = "2.1"
-
-# ----------------------------------------------------------------- settings
-
-def load_settings():
-    st = json.loads(json.dumps(DEFAULTS))
-    try:
-        with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
-            st.update(json.load(f))
-    except (OSError, ValueError):
-        pass
-    return st
-
-
-def save_settings(st):
-    os.makedirs(DATA_DIR, exist_ok=True)
-    tmp = SETTINGS_PATH + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(st, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, SETTINGS_PATH)
-
-# ----------------------------------------------------------------- keys / WARP API
-
-def b64(b):
-    return base64.b64encode(b).decode()
-
-
-def gen_keypair():
-    k = X25519PrivateKey.generate()
-    priv = k.private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw,
-                           serialization.NoEncryption())
-    pub = k.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
-    return priv, pub
-
-
-WARP_API = "https://api.cloudflareclient.com/v0a2158"
-WARP_HEADERS = {
-    "User-Agent": "okhttp/3.12.1",
-    "CF-Client-Version": "a-6.10-2158",
-    "Content-Type": "application/json; charset=UTF-8",
-}
-
-
-def warp_register():
-    """Регистрирует новый бесплатный аккаунт WARP и возвращает данные для конфига."""
-    priv, pub = gen_keypair()
-    body = {
-        "key": b64(pub), "install_id": "", "fcm_token": "",
-        "tos": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
-        "type": "Android", "model": "PC", "locale": "en_US", "warp_enabled": True,
-    }
-    req = urllib.request.Request(WARP_API + "/reg", data=json.dumps(body).encode(),
-                                 headers=WARP_HEADERS, method="POST")
-    with urllib.request.urlopen(req, timeout=20) as r:
-        j = json.loads(r.read().decode())
-    d = j.get("result", j)
-    cfg = d["config"]
-    peer = cfg["peers"][0]
-    addr = cfg["interface"]["addresses"]
-    return {
-        "private_key": b64(priv), "public_key": b64(pub),
-        "peer_public_key": peer["public_key"],
-        "v4": addr["v4"], "v6": addr.get("v6", ""),
-        "id": d.get("id"), "token": d.get("token"),
-        "created": datetime.now().strftime("%d.%m.%Y %H:%M"),
-    }
-
-# ----------------------------------------------------------------- WireGuard handshake ping
-
-CONSTRUCTION = b"Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s"
-IDENTIFIER = b"WireGuard v1 zx2c4 Jason@zx2c4.com"
-LABEL_MAC1 = b"mac1----"
-
-
-def _hash(*parts):
-    h = hashlib.blake2s()
-    for p in parts:
-        h.update(p)
-    return h.digest()
-
-
-def _hmac(key, data):
-    return hmac.new(key, data, hashlib.blake2s).digest()
-
-
-def _kdf(key, data, n):
-    t0 = _hmac(key, data)
-    out, prev = [], b""
-    for i in range(1, n + 1):
-        prev = _hmac(t0, prev + bytes([i]))
-        out.append(prev)
-    return out
-
-
-def _aead(key, counter, pt, ad):
-    return ChaCha20Poly1305(key).encrypt(b"\0" * 4 + struct.pack("<Q", counter), pt, ad)
-
-
-def _dh(priv, pub):
-    return X25519PrivateKey.from_private_bytes(priv).exchange(X25519PublicKey.from_public_bytes(pub))
-
-
-def _tai64n():
-    t = time.time()
-    s = int(t)
-    return struct.pack(">QI", 0x400000000000000A + s, int((t - s) * 1e9))
-
-
-def build_initiation(s_priv, s_pub, r_pub, sender=None):
-    """Сообщение Handshake Initiation (148 байт) по протоколу WireGuard."""
-    c = _hash(CONSTRUCTION)
-    h = _hash(c, IDENTIFIER)
-    h = _hash(h, r_pub)
-    e_priv, e_pub = gen_keypair()
-    c = _kdf(c, e_pub, 1)[0]
-    h = _hash(h, e_pub)
-    c, k = _kdf(c, _dh(e_priv, r_pub), 2)
-    enc_static = _aead(k, 0, s_pub, h)
-    h = _hash(h, enc_static)
-    c, k = _kdf(c, _dh(s_priv, r_pub), 2)
-    enc_ts = _aead(k, 0, _tai64n(), h)
-    sender = secrets.randbits(32) if sender is None else sender
-    msg = struct.pack("<II", 1, sender) + e_pub + enc_static + enc_ts
-    mac1 = hashlib.blake2s(msg, key=_hash(LABEL_MAC1, r_pub), digest_size=16).digest()
-    return msg + mac1 + b"\0" * 16, sender
-
-
-def handshake_ping(host, port, warp, awg=None, timeout=1.2):
-    """RTT (мс) реального рукопожатия с сервером WARP или None, если ответа нет."""
-    s_priv = base64.b64decode(warp["private_key"])
-    s_pub = base64.b64decode(warp["public_key"])
-    r_pub = base64.b64decode(warp["peer_public_key"])
-    pkt, sender = build_initiation(s_priv, s_pub, r_pub)
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        addr = (host, port)
-        if awg:  # мусорные пакеты, как у AmneziaWG — помогают пройти DPI
-            for _ in range(int(awg.get("Jc", 0))):
-                sock.sendto(os.urandom(random.randint(int(awg["Jmin"]), int(awg["Jmax"]))), addr)
-        t0 = time.perf_counter()
-        sock.sendto(pkt, addr)
-        deadline = t0 + timeout
-        while True:
-            left = deadline - time.perf_counter()
-            if left <= 0:
-                return None
-            sock.settimeout(left)
-            data, _ = sock.recvfrom(2048)
-            if len(data) >= 92 and data[0] == 2 and struct.unpack("<I", data[8:12])[0] == sender:
-                return (time.perf_counter() - t0) * 1000
-    except OSError:
-        return None
-    finally:
-        sock.close()
-
-
-WARP_IPS = (["162.159.192.%d" % i for i in (1, 2, 5, 7, 9, 10)]
-            + ["162.159.193.%d" % i for i in (1, 3, 5, 10)]
-            + ["162.159.195.%d" % i for i in (1, 4, 8)]
-            + ["188.114.96.1", "188.114.96.3", "188.114.97.1", "188.114.97.4",
-               "188.114.98.1", "188.114.99.1"])
-WARP_PORTS = [2408, 500, 1701, 4500, 878, 894, 854, 939, 7559]
-
-
-def scan_endpoints(warp, awg, progress=None, tries=2):
-    return probe_endpoints([f"{ip}:{p}" for ip in WARP_IPS for p in WARP_PORTS], warp, awg, progress, tries)
-
-
-def probe_endpoints(eps, warp, awg, progress=None, tries=2):
-    cands = [split_endpoint(e) for e in eps]
-    done = [0]
-    lock = threading.Lock()
-
-    def test(c):
-        best = None
-        for _ in range(tries):
-            ms = handshake_ping(c[0], c[1], warp, awg)
-            if ms is not None and (best is None or ms < best):
-                best = ms
-        with lock:
-            done[0] += 1
-            if progress:
-                progress(done[0], len(cands))
-        return c, best
-
-    with ThreadPoolExecutor(max_workers=40) as ex:
-        res = list(ex.map(test, cands))
-    ok = sorted([(f"{ip}:{p}", ms) for (ip, p), ms in res if ms is not None], key=lambda x: x[1])
-    return ok, len(cands)
-
-# ----------------------------------------------------------------- game detection / ping
-
-def is_public_v4(ip):
-    try:
-        a = ipaddress.ip_address(ip)
-    except ValueError:
-        return False
-    return a.version == 4 and a.is_global
-
-
-def icmp_ping(ip, count=3):
-    flag = "-n" if os.name == "nt" else "-c"
-    cmd = ["ping", flag, str(count), "-w" if os.name == "nt" else "-W", "1000" if os.name == "nt" else "1", ip]
-    try:
-        out = subprocess.run(cmd, capture_output=True, timeout=count * 2 + 3, creationflags=NOWIN).stdout
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    text = out.decode("oem" if os.name == "nt" else "utf-8", errors="ignore")
-    vals = [float(v) for v in re.findall(r"[=<]\s*(\d+(?:[.,]\d+)?)\s*(?:ms|мс)", text.replace(",", "."))]
-    return round(sum(vals) / len(vals)) if vals else None
-
-# ----------------------------------------------------------------- config / tunnel
-
-def split_endpoint(ep):
-    host, _, port = ep.rpartition(":")
-    return host, int(port)
-
-
-def normalize_ranges(ranges, exclude_ip=None):
-    nets = []
-    for r in ranges:
-        r = r.strip()
-        if not r:
-            continue
-        n = ipaddress.ip_network(r, strict=False)
-        if n.version == 4:
-            nets.append(n)
-    nets = list(ipaddress.collapse_addresses(nets))
-    if exclude_ip:
-        ex = ipaddress.ip_network(exclude_ip + "/32")
-        out = []
-        for n in nets:
-            out.extend(n.address_exclude(ex) if ex.subnet_of(n) else [n])
-        nets = list(ipaddress.collapse_addresses(out))
-    return [str(n) for n in nets]
-
-
-def build_conf(st, kind):
-    w = st["warp"]
-    host, port = split_endpoint(st["endpoint"])
-    ranges = normalize_ranges(st["ranges"], exclude_ip=host)
-    if not ranges:
-        raise ValueError("Нет IP-диапазонов игры")
-    lines = ["[Interface]", f"PrivateKey = {w['private_key']}", f"Address = {w['v4']}/32",
-             f"MTU = {int(st.get('mtu', 1280))}"]
-    if kind == "awg":
-        a = st["awg"]
-        lines += [f"Jc = {a['Jc']}", f"Jmin = {a['Jmin']}", f"Jmax = {a['Jmax']}",
-                  "S1 = 0", "S2 = 0", "H1 = 1", "H2 = 2", "H3 = 3", "H4 = 4"]
-    lines += ["", "[Peer]", f"PublicKey = {w['peer_public_key']}",
-              f"AllowedIPs = {', '.join(ranges)}", f"Endpoint = {host}:{port}",
-              "PersistentKeepalive = 25", ""]
-    return "\n".join(lines)
-
-
-def find_client():
-    pf = os.environ.get("ProgramFiles", r"C:\Program Files")
-    for path, kind in ((os.path.join(pf, "AmneziaWG", "amneziawg.exe"), "awg"),
-                       (os.path.join(pf, "WireGuard", "wireguard.exe"), "wg")):
-        if os.path.exists(path):
-            return path, kind
-    return None, None
-
-
-def _run(cmd, timeout=30):
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
-                          creationflags=NOWIN, errors="ignore")
-
-
-def service_name(kind):
-    return ("AmneziaWGTunnel$" if kind == "awg" else "WireGuardTunnel$") + TUNNEL
-
-
-def tunnel_running(kind):
-    if os.name != "nt" or not kind:
-        return False
-    try:
-        return "RUNNING" in _run(["sc", "query", service_name(kind)]).stdout
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-
-
-def tunnel_down(exe):
-    _run([exe, "/uninstalltunnelservice", TUNNEL])
-
-
-def tunnel_up(exe, kind, conf_text):
-    os.makedirs(DATA_DIR, exist_ok=True)
-    with open(CONF_PATH, "w", encoding="utf-8") as f:
-        f.write(conf_text)
-    tunnel_down(exe)
-    time.sleep(1.0)
-    r = _run([exe, "/installtunnelservice", CONF_PATH])
-    for _ in range(10):
-        time.sleep(0.5)
-        if tunnel_running(kind):
-            return True, ""
-    return False, (r.stderr or r.stdout or "служба не запустилась").strip()
-
-
-def is_admin():
-    try:
-        return bool(ctypes.windll.shell32.IsUserAnAdmin())
-    except Exception:
-        return False
-
-
-def resource(name):
-    return os.path.join(getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__))), name)
-
-# ----------------------------------------------------------------- game / ping / stats v2
-
-def game_remote_endpoints(names):
-    """{ip: tcp_port | None} для подключений процесса игры."""
-    if psutil is None:
-        return {}
-    wanted = {n.strip().lower() for n in names if n.strip()}
-    pids = set()
-    for p in psutil.process_iter(["name"]):
-        if (p.info.get("name") or "").lower() in wanted:
-            pids.add(p.pid)
-    if not pids:
-        return {}
-    out = {}
-    try:
-        conns = psutil.net_connections(kind="inet")
-    except (psutil.AccessDenied, OSError):
-        conns = []
-    for c in conns:
-        if c.pid in pids and c.raddr and is_public_v4(c.raddr.ip):
-            port = c.raddr.port if c.type == socket.SOCK_STREAM else None
-            if out.get(c.raddr.ip) is None:
-                out[c.raddr.ip] = port
-    return out
-
-
-def game_remote_ips(names):
-    return set(game_remote_endpoints(names))
-
-
-def tcp_ping(ip, port, count=4, timeout=1.5):
-    """Точный пинг по времени TCP-рукопожатия (работает, даже когда ICMP закрыт)."""
-    vals = []
-    for i in range(count):
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(timeout)
-        t0 = time.perf_counter()
-        try:
-            s.connect((ip, int(port)))
-            vals.append((time.perf_counter() - t0) * 1000)
-        except ConnectionRefusedError:
-            # RST тоже даёт честный RTT, но Windows повторяет SYN после RST — там не считаем
-            if os.name != "nt":
-                vals.append((time.perf_counter() - t0) * 1000)
-        except OSError:
-            pass
-        finally:
-            s.close()
-        if i + 1 < count:
-            time.sleep(0.12)
-    if not vals:
-        return None
-    return {"ms": round(statistics.median(vals)), "min": round(min(vals)),
-            "jitter": round(statistics.pstdev(vals)) if len(vals) > 1 else 0,
-            "loss": round(100 * (count - len(vals)) / count)}
-
-
-def best_ping(ip, port=None, count=4):
-    """TCP-пинг по порту игры (или 443/80/8080), если не вышло — ICMP."""
-    for p in ([port] if port else []) + [443, 80, 8080]:
-        if tcp_ping(ip, p, 1, timeout=1.2):
-            r = tcp_ping(ip, p, count)
-            if r:
-                r.update(how=f"TCP {p}", port=p)
-                return r
-    ms = icmp_ping(ip, count)
-    if ms is not None:
-        return {"ms": ms, "min": ms, "jitter": 0, "loss": 0, "how": "ICMP", "port": 0}
-    return None
-
-
-def in_nets(ip, nets):
-    try:
-        a = ipaddress.ip_address(ip)
-    except ValueError:
-        return False
-    return any(a in ipaddress.ip_network(n, strict=False) for n in nets)
-
-
-def tunnel_stats(exe, kind):
-    """Последнее рукопожатие и трафик туннеля через awg.exe / wg.exe (если есть)."""
-    if not exe:
-        return None
-    tool = os.path.join(os.path.dirname(exe), "awg.exe" if kind == "awg" else "wg.exe")
-    if not os.path.exists(tool):
-        return None
-    try:
-        lines = _run([tool, "show", TUNNEL, "dump"], timeout=5).stdout.strip().splitlines()
-        f = lines[1].split("\t")
-        return {"handshake": int(f[4]), "rx": int(f[5]), "tx": int(f[6])}
-    except (OSError, subprocess.TimeoutExpired, IndexError, ValueError):
-        return None
-
+VERSION = __version__
+LOG = logging.getLogger("abiroute")
+
+BG, SURF, RAISED, EDGE = "#191919", "#202020", "#2c2c2b", "#383836"
+FG, MUTED = "#ffffff", "#a5a5a3"
+ACC, ACC_H = "#5e9fe8", "#7db3ef"
+OK, WAIT, BAD = "#72bc8f", "#de9255", "#e97366"
+TINT = {OK: "#1f2a24", WAIT: "#2f261d", BAD: "#30201e", ACC: "#1c2634"}
+FONT = "Segoe UI"
+MONO = "Consolas"
 
 # Готовые списки. Собраны из реальных подключений игры (журнал ABI Route, ноябрь 2026).
 PRESETS = {
@@ -493,54 +55,6 @@ JUNK_PROFILES = [
     {"Jc": 4, "Jmin": 40, "Jmax": 70},     # лёгкая маскировка
     {"Jc": 120, "Jmin": 23, "Jmax": 911},  # сильная (как в популярных генераторах WARP для РФ)
 ]
-
-
-def check_targets(targets, timeout=1.5):
-    """Отвечает ли хоть один сервер игры. targets = [(ip, tcp_port или 0 для ICMP)] -> мс или None."""
-    if not targets:
-        return None
-
-    def one(t):
-        ip, port = t
-        if port:
-            r = tcp_ping(ip, port, 1, timeout=timeout)
-            return r["ms"] if r else None
-        return icmp_ping(ip, 1)
-
-    with ThreadPoolExecutor(max_workers=len(targets)) as ex:
-        vals = [v for v in ex.map(one, targets) if v is not None]
-    return min(vals) if vals else None
-
-
-def wait_tunnel(targets, seconds=8.0):
-    """Ждёт, пока через поднятый туннель начнут отвечать серверы игры. -> мс или None."""
-    end = time.time() + seconds
-    time.sleep(1.0)
-    while True:
-        ms = check_targets(targets)
-        if ms is not None or time.time() >= end:
-            return ms
-        time.sleep(0.5)
-
-
-# ----------------------------------------------------------------- GUI
-
-BG, SURF, RAISED, EDGE = "#191919", "#202020", "#2c2c2b", "#383836"
-FG, MUTED = "#ffffff", "#a5a5a3"
-ACC, ACC_H = "#5e9fe8", "#7db3ef"
-OK, WAIT, BAD = "#72bc8f", "#de9255", "#e97366"
-TINT = {OK: "#1f2a24", WAIT: "#2f261d", BAD: "#30201e", ACC: "#1c2634"}
-FONT = "Segoe UI"
-MONO = "Consolas"
-
-
-def fmt_bytes(n):
-    n = float(n)
-    for u in ("Б", "КБ", "МБ"):
-        if n < 1024:
-            return f"{n:.0f} {u}" if u == "Б" else f"{n:.1f} {u}"
-        n /= 1024
-    return f"{n:.2f} ГБ"
 
 
 class App:
@@ -566,7 +80,7 @@ class App:
         try:
             if FONT not in tkfont.families(r):
                 FONT = "Arial"
-        except Exception:
+        except Exception:  # noqa: BLE001
             FONT = "Arial"
         r.title(f"{APP_NAME} — Arena Breakout Infinite")
         r.geometry("940x740")
@@ -574,17 +88,19 @@ class App:
         r.configure(bg=BG)
         try:
             r.iconbitmap(resource("icon.ico"))
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
         self._style()
         self._build()
         r.protocol("WM_DELETE_WINDOW", self.on_close)
         r.after(100, self._pump)
         threading.Thread(target=self._watcher, daemon=True).start()
+        threading.Thread(target=self._check_updates, daemon=True).start()
         self._startup_checks()
 
     # ---------- helpers
     def log(self, msg):
+        LOG.info(msg)
         self.q.put(("log", f"[{time.strftime('%H:%M:%S')}] {msg}"))
 
     def ui(self, fn):
@@ -594,7 +110,7 @@ class App:
         def wrap():
             try:
                 fn()
-            except Exception as e:  # noqa
+            except Exception as e:  # noqa: BLE001
                 self.log(f"Ошибка: {e}")
             finally:
                 self.busy = False
@@ -627,6 +143,25 @@ class App:
         a = dict(self.st["awg"])
         a["Jc"] = min(int(a["Jc"]), 8)
         return a
+
+    def _check_updates(self):
+        """Раз в запуск смотрит последний GitHub Release; молчит при любых сбоях сети."""
+        try:
+            req = urllib.request.Request(f"{REPO_URL}/releases/latest",
+                                         headers={"User-Agent": f"{APP_NAME}/{VERSION}"})
+            with urllib.request.urlopen(req, timeout=6) as r:
+                tag = str(json.loads(r.read().decode()).get("tag_name", "")).lstrip("vV")
+        except (OSError, ValueError):
+            return
+
+        def ver(s):
+            try:
+                return tuple(int(x) for x in s.split("."))
+            except ValueError:
+                return ()
+
+        if ver(tag) > ver(VERSION):
+            self.log(f"Доступна новая версия {tag}: {REPO_URL}/releases/latest")
 
     # ---------- widgets
     def _style(self):
@@ -805,7 +340,7 @@ class App:
         self.ping_sum.pack(anchor="w", pady=(10, 0))
 
         c2, i2 = self._card(tab, "Серверы WARP", "Результат последнего поиска. Двойной клик — выбрать вручную. "
-                                                "Остальные серверы — запас ��ля автосмены.")
+                                                "Остальные серверы — запас для автосмены.")
         c2.pack(fill="both", expand=True)
         t2 = self.ep_tree = ttk.Treeview(i2, columns=("ep", "ms", "st"), show="headings", height=5)
         for key, name, w in (("ep", "Сервер", 220), ("ms", "Рукопожатие", 120), ("st", "", 140)):
@@ -923,7 +458,7 @@ class App:
                 self.started_at = time.time()
                 self.set_state("on")
                 self.log("Туннель уже работает в фоне.")
-        if psutil is None:
+        if learn.psutil is None:
             self.log("⚠ psutil не установлен — автопоиск IP игры недоступен.")
 
     # ---------- ui -> settings
@@ -983,9 +518,14 @@ class App:
         if not sel:
             return
         ep, ms = self.ep_tree.item(sel[0], "values")[:2]
+        try:
+            ms = int(str(ms).split()[0])
+        except (ValueError, IndexError):
+            ms = None
         with self.lock:
-            self.st["endpoint"] = ep
-            self.st["endpoint_ms"] = int(str(ms).split()[0])
+            self.st["endpoint"] = str(ep)
+            if ms is not None:
+                self.st["endpoint_ms"] = ms
             save_settings(self.st)
         self._refresh()
         self.log(f"Выбран сервер WARP {ep}." + (" Перезапускаю туннель…" if self.running else ""))
@@ -1028,7 +568,7 @@ class App:
             self.ui(lambda: self.prog.configure(maximum=t, value=d))
 
         def job():
-            self.log(f"Проверяю {len(WARP_IPS) * len(WARP_PORTS)} серверов WARP настоящим рукопожатием…")
+            self.log(f"Проверяю ~{len(WARP_IPS) * len(WARP_PORTS)} серверов WARP настоящим рукопожатием…")
             ok, total = scan_endpoints(self.st["warp"], self._awg(), prog)
             if not ok:
                 self.log("Ни один сервер не ответил. Проверьте интернет; возможна блокировка UDP провайдером.")
@@ -1103,7 +643,7 @@ class App:
                 tag = ("better",) if dv < -2 else ("worse",) if dv > 2 else ()
             stab = f"±{src['jitter']} мс · потери {src['loss']}%" if src else "—"
             t.insert("", "end", values=(ip, src["how"] if src else "—", cell(rr, "direct"), cell(rr, "warp"),
-                                         diff, stab), tags=tag)
+                                        diff, stab), tags=tag)
         if not diffs:
             tested = [rr for rr in self.results.values() if "warp" in rr]
             if tested and not any(rr["warp"] for rr in tested):
@@ -1424,10 +964,11 @@ class App:
                             self._failover()
                         finally:
                             self.busy = False
-            except Exception as e:  # noqa
+            except Exception as e:  # noqa: BLE001
                 self.log(f"Фоновая ошибка: {e}")
 
     def _learn(self, eps, prefix):
+        new_nets = []
         with self.lock:
             changed = False
             ports = self.st.setdefault("tcp_ports", {})
@@ -1452,19 +993,20 @@ class App:
                 self.st["seen_ips"] = (seen + self.st["seen_ips"])[:50]
                 changed = True
             if new:
-                self.st["ranges"] += [str(n) for n in new]
+                new_nets = [str(n) for n in new]
+                self.st["ranges"] += new_nets
                 changed = True
             if changed:
                 save_settings(self.st)
-        if not new:
+        if not new_nets:
             return
-        lines = "\n".join(str(n) for n in new)
+        lines = "\n".join(new_nets)
 
         def add():
             cur_text = self.ranges_txt.get("1.0", "end").strip()
             self.ranges_txt.insert("end", ("\n" if cur_text else "") + lines)
         self.ui(add)
-        self.log(f"Найдены новые серверы игры: {', '.join(str(n) for n in new)}")
+        self.log(f"Найдены новые серверы игры: {', '.join(new_nets)}")
         if self.running or self.armed:
             self.pending = True
             if self.armed:
@@ -1479,15 +1021,13 @@ class App:
             if ans is None:
                 return
             if ans:
+                self.collect_ui()
                 self.root.iconify()
                 return
             if self.exe:
                 tunnel_down(self.exe)
+        self.collect_ui()
         self.root.destroy()
 
     def run(self):
         self.root.mainloop()
-
-
-if __name__ == "__main__":
-    App().run()

@@ -1,13 +1,49 @@
-name: build-exe
-on: [push, workflow_dispatch]
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
-      - run: pip install -r requirements.txt pyinstaller
-      - run: pyinstaller --noconfirm --onefile --windowed --uac-admin --name ABIRoute --icon icon.ico --add-data "icon.ico;." abi_route.py
-      - uses: actions/upload-artifact@v4
-        with: { name: ABIRoute, path: dist/ABIRoute.exe }
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt pyinstaller
+
+      - name: Run tests
+        run: python -m pytest tests -q
+
+      - name: Build exe
+        run: pyinstaller --noconfirm --clean ABIRoute.spec
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+
+      - name: Upload artifact (каждый пуш)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ABIRoute
+          path: dist/ABIRoute.exe
+
+      - name: Create release (на теге v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" dist/ABIRoute.exe `
+            --title "ABI Route ${{ github.ref_name }}" `
+            --generate-notes
