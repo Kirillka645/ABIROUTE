@@ -118,6 +118,7 @@ class Check(tk.Frame):
                             justify="left")
         self.lbl.pack(side="left", fill="x", expand=True, padx=(px(8), 0))
         if wrap:  # только когда сам флажок растянут по ширине родителя, иначе ширина зациклится
+            self.lbl.configure(wraplength=px(200))  # без начального переноса текст раздувает колонку
             self.bind("<Configure>", lambda e: self.lbl.configure(wraplength=max(px(120), e.width - px(30))))
         for w in (self.box, self.lbl):
             w.bind("<Button-1>", self.toggle)
@@ -170,7 +171,7 @@ class RadioList(tk.Frame):
             title = tk.Label(text, text=opt["title"], bg=self["bg"], anchor="w", font=T.F["body_b"])
             title.pack(fill="x")
             hint = tk.Label(text, text=opt["hint"], bg=self["bg"], anchor="w", justify="left",
-                            font=T.F["small"])
+                            font=T.F["small"], wraplength=px(200))  # точная ширина — в _rewrap
             hint.pack(fill="x")
             self.rows[opt["id"]] = (row, mark, title, hint, opt)
             if opt["enabled"]:

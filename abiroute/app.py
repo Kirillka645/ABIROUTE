@@ -36,6 +36,7 @@ STATES = {  # заголовок, пояснение, кнопка, вид кн�
 NAV = [("route", "Маршрут"), ("ping", "Пинг"), ("warp", "WARP"), ("servers", "Серверы игры"),
        ("log", "Журнал")]
 LEVEL_COLOR = {"ok": T.GOOD, "warn": T.CAUTION, "bad": T.BAD, "info": T.TEXT}
+MINI_LOG_LINES = 6
 
 
 def resource(name):
@@ -317,7 +318,9 @@ class App:
 
     @staticmethod
     def _fit(container, label, margin=0):
-        """Перенос строк по ширине контейнера (Tk сам не переносит, а непомещающийся текст обрезает)."""
+        """Перенос строк по ширине контейнера. Начальная ширина переноса маленькая: иначе запрошенная
+        ширина подписи раздувает колонки grid, и содержимое уезжает за край."""
+        label.configure(wraplength=px(200))
         container.bind("<Configure>", lambda e: label.configure(wraplength=max(px(160), e.width - px(margin))),
                        add="+")
 
@@ -375,8 +378,8 @@ class App:
         self.events_box.pack(fill="both", expand=True, pady=(px(16), 0))
         tk.Label(self.events_box, text="Последние события", bg=T.INK, fg=T.FAINT, font=T.F["small"],
                  anchor="w").pack(fill="x", pady=(0, px(6)))
-        self.mini_log = self._log_widget(self.events_box, 5)
-        self.mini_log.pack(fill="both", expand=True)
+        self.mini_log = self._log_widget(self.events_box, MINI_LOG_LINES)
+        self.mini_log.pack(fill="x")  # фиксированная высота: строки не обрезаются по краю
 
     def _build_setup(self):
         """Первый запуск: три шага по порядку, пока чего-то не хватает."""
@@ -547,8 +550,8 @@ class App:
         sp = ScrollPage(page, T.INK)
         sp.pack(fill="both", expand=True)
         body = sp.body
-        body.grid_columnconfigure(0, weight=1, uniform="c")
-        body.grid_columnconfigure(1, weight=1, uniform="c")
+        body.grid_columnconfigure(0, weight=5, uniform="c")
+        body.grid_columnconfigure(1, weight=6, uniform="c")
         left = tk.Frame(body, bg=T.INK)
         left.grid(row=0, column=0, sticky="nsew", padx=(0, px(18)))
         right = tk.Frame(body, bg=T.INK)
@@ -585,14 +588,14 @@ class App:
         board = tk.Frame(right, bg=T.BOARD, height=px(282))  # ровно 7 строк, дальше прокрутка
         board.pack(fill="x")
         board.pack_propagate(False)
-        cols = [{"key": "ep", "title": "Сервер", "w": 1.7},
+        cols = [{"key": "ep", "title": "Сервер", "w": 1.7, "draw": self._cell_ep},
                 {"key": "ms", "title": "До узла", "w": .8, "align": "e", "draw": self._cell_ep_ms},
-                {"key": "colo", "title": "Узел", "w": 1.1, "pad": 22, "draw": self._cell_ep_colo},
-                {"key": "cur", "title": "", "w": .8, "align": "e", "draw": self._cell_ep_cur}]
+                {"key": "colo", "title": "Узел", "w": 1.1, "pad": 14, "draw": self._cell_ep_colo}]
         self.ep_table = Table(board, cols, row_h=34, on_open=lambda r: self.engine.pick_endpoint(r["ep"]),
                               empty="Список пуст. Нажмите «Найти сервер».")
         self.ep_table.pack(fill="both", expand=True, padx=px(4), pady=px(4))
-        hint = tk.Label(right, text="Двойной щелчок или Enter — выбрать сервер. Остальные — запас для автосмены.",
+        hint = tk.Label(right, text="Двойной щелчок или Enter — выбрать сервер, текущий отмечен ромбом. "
+                                    "Остальные — запас для автосмены.",
                         bg=T.INK, fg=T.FAINT, font=T.F["small"], anchor="w", justify="left", wraplength=px(400))
         hint.pack(fill="x", pady=(px(6), 0))
         self._fit(right, hint)
@@ -614,6 +617,15 @@ class App:
         mhint.pack(fill="x", pady=(px(6), 0))
         self._fit(right, mhint)
 
+    def _cell_ep(self, c, x0, y0, x1, y1, row):
+        """Текущий сервер — янтарный, с ромбом в левом поле таблицы (как узел WARP на карте)."""
+        ym = (y0 + y1) / 2
+        if row["cur"]:
+            k, cx = px(3.5), x0 - px(6)
+            c.create_polygon(cx, ym - k, cx + k, ym, cx, ym + k, cx - k, ym, fill=T.SIGNAL, outline="")
+        c.create_text(x0, ym, text=row["ep"], anchor="w", fill=T.SIGNAL if row["cur"] else T.TEXT,
+                      font=T.F["body_b" if row["cur"] else "body"])
+
     def _cell_ep_ms(self, c, x0, y0, x1, y1, row):
         ym = (y0 + y1) / 2
         if row["ms"] is not None:
@@ -623,14 +635,6 @@ class App:
 
     def _cell_ep_colo(self, c, x0, y0, x1, y1, row):
         c.create_text(x0, (y0 + y1) / 2, text=row["colo"] or "", anchor="w", fill=T.MUTED, font=T.F["body"])
-
-    def _cell_ep_cur(self, c, x0, y0, x1, y1, row):
-        if row["cur"]:
-            ym, k = (y0 + y1) / 2, px(4)
-            tw = T.F["small"].measure("выбран")
-            c.create_text(x1, ym, text="выбран", anchor="e", fill=T.SIGNAL, font=T.F["small"])
-            x = x1 - tw - px(10)
-            c.create_polygon(x, ym - k, x + k, ym, x, ym + k, x - k, ym, fill=T.SIGNAL, outline="")
 
     def _save_mtu(self):
         try:
@@ -854,13 +858,16 @@ class App:
             subprocess.Popen(["xdg-open", DATA_DIR])
 
     def _log(self, text, level, t):
-        for w, limit in ((self.log_txt, 2000), (self.mini_log, 60)):
+        for w, limit in ((self.log_txt, 2000), (self.mini_log, MINI_LOG_LINES)):
             w.configure(state="normal")
-            w.insert("end", t + "  ", "time")
-            w.insert("end", text + "\n", level)
+            # перевод строки перед записью, а не после: иначе внизу всегда пустая строка и see("end")
+            # прокручивает журнал так, что верхняя запись срезается
+            first = w.compare("end-1c", "==", "1.0")
+            w.insert("end", ("" if first else "\n") + t + "  ", "time")
+            w.insert("end", text, level)
             lines = int(w.index("end-1c").split(".")[0])
             if lines > limit:
-                w.delete("1.0", f"{lines - limit}.0")
+                w.delete("1.0", f"{lines - limit + 1}.0")
             w.see("end")
             w.configure(state="disabled")
 
