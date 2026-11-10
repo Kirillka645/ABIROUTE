@@ -917,16 +917,18 @@ class App:
                                             "готовый конфиг.", fg=T.MUTED)
             self.gen_btn.set(text="Создать профиль")
         cps = e.cps_ok
+        c = e.client
+        wg_only = e.plain_wg
         opts = []
-        if e.st.get("obf_id") == "custom":
+        if e.st.get("obf_id") == "custom" and not wg_only:
             opts.append({"id": "custom", "title": "Из импортированного конфига", "enabled": True,
                          "hint": "Параметры Jc и I1–I5 взяты из конфига как есть."})
         for pr in warp.OBF_PRESETS:
             need = warp.needs_cps(pr["obf"])
-            opts.append({"id": pr["id"], "title": pr["name"], "enabled": cps or not need,
-                         "hint": pr["hint"] + ("" if cps or not need else " Нужен AmneziaWG 2.0 или новее.")})
-        self.obf_list.set_options(opts, e.st.get("obf_id"))
-        c = e.client
+            ok = pr["id"] == "none" if wg_only else (cps or not need)
+            why = " Нужен AmneziaWG." if wg_only else " Нужен AmneziaWG 2.0 или новее."
+            opts.append({"id": pr["id"], "title": pr["name"], "enabled": ok, "hint": pr["hint"] + ("" if ok else why)})
+        self.obf_list.set_options(opts, "none" if wg_only else e.st.get("obf_id"))
         if c and c["kind"] == "awg" and not cps:
             self.obf_note.configure(text=f"У вас AmneziaWG {tunnel.version_str(c['version'])}. Обновите до 2.0+, "
                                          "чтобы открыть маскировку QUIC, SIP и DNS.")
@@ -1009,8 +1011,31 @@ def grab(root, path):
     img.save(path)
 
 
+def selftest(path):
+    """Самопроверка собранного exe (CI): все страницы на демо-данных открываются без ошибок.
+    Без сети и туннеля. Результат — в файл: в exe без консоли stdout/stderr нет."""
+    import traceback
+    errors = []
+    try:
+        app = App(demo=True)
+        app.root.report_callback_exception = lambda *exc: errors.append("".join(traceback.format_exception(*exc)))
+        for key, _ in NAV:
+            app.show(key)
+            app.root.update()
+        app.root.after(800, app.root.destroy)
+        app.root.mainloop()
+    except Exception:  # noqa: BLE001 — любая ошибка = провал проверки
+        errors.append(traceback.format_exc())
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(errors) if errors else f"ok {APP_NAME} {VERSION}\n")
+    return 1 if errors else 0
+
+
 def main(argv=()):
     argv = list(argv)
+    if "--selftest" in argv:
+        i = argv.index("--selftest")
+        return selftest(argv[i + 1] if i + 1 < len(argv) else "selftest.txt")
     shots = "--screenshot" in argv
     if shots:
         import importlib.util

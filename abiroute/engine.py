@@ -91,14 +91,36 @@ class Engine:
 
     @property
     def obf(self):
-        return dict(self.st.get("obf") or {})
+        """Маскировка, которую реально применит установленный клиент. Пробы шлют ровно её,
+        иначе проба пройдёт там, где настоящий туннель заблокируют."""
+        o = dict(self.st.get("obf") or {})
+        c = self.client
+        if c and c.get("kind") == "wg":
+            return dict(warp.PRESET_BY_ID["none"]["obf"])
+        if c and not c.get("cps"):
+            o = {k: v for k, v in o.items() if not k.startswith("I")}
+        return o
 
     @property
     def cps_ok(self):
         return bool(self.client and self.client.get("cps"))
 
+    @property
+    def plain_wg(self):
+        return bool(self.client and self.client.get("kind") == "wg")
+
+    def _effective_preset(self):
+        """Текущая маскировка с id, который соответствует её действительным параметрам."""
+        obf = self.obf
+        if obf == dict(self.st.get("obf") or {}):
+            return {"id": self.st.get("obf_id"), "obf": obf}
+        match = next((p for p in warp.OBF_PRESETS if p["obf"] == obf), None)
+        return {"id": match["id"] if match else "custom", "obf": obf}
+
     def preset_name(self):
-        p = warp.PRESET_BY_ID.get(self.st.get("obf_id"))
+        if self.plain_wg:
+            return "нет (WireGuard)"
+        p = warp.PRESET_BY_ID.get(self._effective_preset()["id"])
         return p["name"] if p else "своя (из конфига)"
 
     def set_state(self, state):
@@ -122,7 +144,7 @@ class Engine:
                 self.log(f"Клиент туннеля: AmneziaWG {tunnel.version_str(c['version'])} — {note}.")
             else:
                 self.log("Клиент туннеля: WireGuard — без маскировки. Для России лучше AmneziaWG.", "warn")
-            if not self.cps_ok and warp.needs_cps(self.obf):
+            if c["kind"] == "awg" and not self.cps_ok and warp.needs_cps(self.st.get("obf")):
                 self.log("Выбранная маскировка требует AmneziaWG 2.0+. Пока туннель пойдёт без I1.", "warn")
             if tunnel.tunnel_running(c["kind"]):
                 self.running = True
@@ -424,11 +446,10 @@ class Engine:
             self.pending = True
             self.last_restart = 0
 
-    def _conf(self, cps=None):
+    def _conf(self):
         with self.lock:
             return warp.build_conf(self.profile, self.st["endpoint"], self.st["ranges"], self.obf,
-                                   self.client["kind"], self.cps_ok if cps is None else cps,
-                                   self.st.get("mtu", 1280))
+                                   self.client["kind"], self.cps_ok, self.st.get("mtu", 1280))
 
     def _apply(self):
         conf = self._conf()
@@ -436,9 +457,6 @@ class Engine:
         self.last_restart = time.time()
         self.set_state("starting")
         ok, err = tunnel.tunnel_up(self.client["exe"], self.client["kind"], conf, CONF_PATH)
-        if not ok and "invalid key" in err.lower() and warp.needs_cps(self.obf):
-            self.log("AmneziaWG не понял параметры I1–I5 — запускаю без них. Обновите AmneziaWG до 2.0+.", "warn")
-            ok, err = tunnel.tunnel_up(self.client["exe"], self.client["kind"], self._conf(cps=False), CONF_PATH)
         if not ok:
             self.running = False
             self.set_state("off")
@@ -490,13 +508,13 @@ class Engine:
 
     # ---------------------------------------------------------------- автоподбор
     def _variants(self):
-        """(сервер, маскировка) для перебора: текущее, затем другие серверы и маскировки."""
+        """(сервер, маскировка) для перебора: текущее, затем другие серверы и маскировки,
+        которые установленный клиент умеет применять."""
         eps = warp.spread([self.st["endpoint"]] + [e[0] for e in self.st.get("endpoint_list", [])], 3)
-        cur = {"id": self.st.get("obf_id"), "obf": self.obf}
-        presets = [cur] + [p for p in warp.presets_for(self.cps_ok) if p["obf"] != cur["obf"]]
-        if not self.cps_ok:
-            presets = [p for p in presets if not warp.needs_cps(p["obf"])]
-        return eps, presets
+        if self.plain_wg:
+            return eps, [warp.PRESET_BY_ID["none"]]
+        cur = self._effective_preset()
+        return eps, [cur] + [p for p in warp.presets_for(self.cps_ok) if p["obf"] != cur["obf"]]
 
     def autotune(self):
         if not self.profile:

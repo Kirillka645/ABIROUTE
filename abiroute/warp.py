@@ -95,8 +95,8 @@ def parse_conf(text):
         text = _from_vpn_key(text) or ""
     sect, iface, peer = None, {}, {}
     for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line[0] in "#;":
+        line = raw.split("#", 1)[0].strip()  # как в AmneziaWG: после # — комментарий
+        if not line or line[0] == ";":
             continue
         if line.startswith("["):
             sect = line.strip("[]").strip().lower()
@@ -155,7 +155,7 @@ def _b(data):
     return "<b 0x" + data.hex() + ">"
 
 
-# Снимок настоящего QUIC Initial — I1 из генератора ImMALWARE/bash-warp-generator (MIT).
+# Снимок настоящего QUIC Initial — I1 из генератора ImMALWARE/bash-warp-generator (MIT, см. THIRD_PARTY_NOTICES.md).
 QUIC_I1 = "<b 0x" + (
     "c2000000011419fa4bb3599f336777de79f81ca9a8d80d91eeec000044c635cef024a885dcb66d1420a91a8c427e87d6"
     "cf8e08b563932f449412cddf77d3e2594ea1c7a183c238a89e9adb7ffa57c133e55c59bec101634db90afb83f75b19fe"
