@@ -1,8 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
-# Сборка: pyinstaller --noconfirm --clean ABIRoute.spec
+
 
 a = Analysis(
-    ['run.py'],
+    ['abi_route.py'],
     pathex=[],
     binaries=[],
     datas=[('icon.ico', '.')],
@@ -37,5 +37,4 @@ exe = EXE(
     entitlements_file=None,
     uac_admin=True,
     icon=['icon.ico'],
-    version='version_info.txt',
 )

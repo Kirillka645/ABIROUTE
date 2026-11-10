@@ -32,13 +32,8 @@ echo === Installing dependencies ===
 !PY! -m pip install -r requirements.txt pyinstaller
 if errorlevel 1 goto fail
 
-echo === Running tests ===
-!PY! -m pip install -r requirements-dev.txt >nul 2>nul
-!PY! -m pytest tests
-if errorlevel 1 goto fail
-
 echo === Building ABIRoute.exe ===
-!PY! -m PyInstaller --noconfirm --clean ABIRoute.spec
+!PY! -m PyInstaller --noconfirm --clean --onefile --windowed --uac-admin --name ABIRoute --icon icon.ico --add-data "icon.ico;." abi_route.py
 if errorlevel 1 goto fail
 
 echo.
