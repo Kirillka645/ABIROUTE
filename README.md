@@ -83,10 +83,11 @@ python abi_route.py --screenshot shots     # снимки всех страни�
 | `abiroute/tunnel.py` | служба AmneziaWG/WireGuard: запуск, остановка, статистика, версия клиента |
 | `abiroute/app.py`, `widgets.py`, `theme.py` | интерфейс |
 
-GitHub Actions на каждый push прогоняет тесты, собирает exe и делает снимки интерфейса на Windows
-(артефакты **ABIRoute** и **screenshots**).
+GitHub Actions на каждый push прогоняет тесты, собирает exe, запускает его в режиме самопроверки (`--selftest`)
+и делает снимки интерфейса на Windows (артефакты **ABIRoute** и **screenshots**).
 
 ## Благодарности
 
 Снимок пакета QUIC для маскировки I1 взят из [ImMALWARE/bash-warp-generator](https://github.com/ImMALWARE/bash-warp-generator)
-(MIT License, Copyright (c) 2024 MALWARE). Пакеты SIP собраны по примерам из RFC 3261.
+(MIT License, Copyright (c) 2024 MALWARE; полный текст лицензии — в [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
+Пакеты SIP собраны по примерам из RFC 3261.

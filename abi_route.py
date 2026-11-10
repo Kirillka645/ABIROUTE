@@ -4,6 +4,7 @@
     python abi_route.py                      — обычный запуск
     python abi_route.py --demo               — интерфейс на образце данных, без сети и туннеля
     python abi_route.py --screenshot папка   — снимки всех страниц (нужен Pillow)
+    ABIRoute.exe --selftest файл             — самопроверка собранного exe (результат в файле)
 """
 import sys
 

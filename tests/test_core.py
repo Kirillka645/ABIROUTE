@@ -85,6 +85,10 @@ class ConfigTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 warp.parse_conf(bad)
 
+    def test_import_inline_comments(self):
+        text = self.text.replace("Endpoint = 162.159.192.1:500", "Endpoint = 162.159.192.1:500  # WARP")
+        self.assertEqual(warp.parse_conf(text)[1]["endpoint"], "162.159.192.1:500")
+
     def test_split_tunnel_conf(self):
         prof, _ = warp.parse_conf(self.text)
         obf = {"Jc": 4, "Jmin": 40, "Jmax": 70, "I1": "<b 0xc2>"}
@@ -201,6 +205,35 @@ class AutotuneTest(unittest.TestCase):
         eng._autotune()
         self.assertEqual(eng.st["obf_id"], "light")
         self.assertTrue(any("2.0+" in s for s in logs))
+
+
+class EffectiveObfuscationTest(unittest.TestCase):
+    """Проба шлёт ровно ту маскировку, которую применит установленный клиент туннеля."""
+
+    AWG3 = {"exe": "x", "kind": "awg", "version": (3, 1, 0), "cps": True, "tool": ""}
+    AWG1 = dict(AWG3, version=(1, 0, 2), cps=False)
+    WG = {"exe": "x", "kind": "wg", "version": (0, 5, 3), "cps": False, "tool": ""}
+
+    def make(self, client):
+        st = json.loads(json.dumps(settings.DEFAULTS))
+        st.update(obf_id="quic", obf=dict(warp.PRESET_BY_ID["quic"]["obf"]))
+        return engine.Engine(lambda *a, **k: None, settings=st, client=client)
+
+    def test_cps_client_keeps_i1(self):
+        self.assertIn("I1", self.make(self.AWG3).obf)
+
+    def test_old_amneziawg_drops_i1(self):
+        eng = self.make(self.AWG1)
+        self.assertEqual(eng.obf, warp.PRESET_BY_ID["light"]["obf"])
+        self.assertEqual(eng.preset_name(), "Лёгкая")
+        _, presets = eng._variants()
+        self.assertEqual(presets[0]["id"], "light")
+        self.assertFalse(any(warp.needs_cps(p["obf"]) for p in presets))
+
+    def test_wireguard_has_no_obfuscation(self):
+        eng = self.make(self.WG)
+        self.assertEqual(wg.obfuscation_packets(eng.obf), [])
+        self.assertEqual([p["id"] for p in eng._variants()[1]], ["none"])
 
 
 if __name__ == "__main__":
