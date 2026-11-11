@@ -7,7 +7,7 @@ import (
 	"sync"
 )
 
-const AppVersion = "4.0.0"
+const AppVersion = "5.0.0"
 
 type WarpAccount struct {
 	PrivateKey    string `json:"privateKey"`
@@ -17,6 +17,8 @@ type WarpAccount struct {
 	IPv6          string `json:"ipv6"`
 	DeviceID      string `json:"deviceId"`
 	Token         string `json:"token"`
+	License       string `json:"license,omitempty"`
+	WarpPlus      bool   `json:"warpPlus"`
 	Created       string `json:"created"`
 	Source        string `json:"source"`
 }
@@ -52,6 +54,18 @@ type CustomTunnelConfig struct {
 	Created       string            `json:"created"`
 }
 
+type ProxyNode struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Scheme  string `json:"scheme"` // "vless" | "hysteria2" | "trojan" | "ss" | "socks5"
+	Server  string `json:"server"`
+	Port    int    `json:"port"`
+	RawURI  string `json:"rawUri"`
+	PingMs  int    `json:"pingMs"`
+	SubURL  string `json:"subUrl,omitempty"`
+	Created string `json:"created"`
+}
+
 type NodeInfo struct {
 	Endpoint     string `json:"endpoint"`
 	ColoCode     string `json:"coloCode"`
@@ -70,6 +84,7 @@ type CustomGame struct {
 	ShortCode    string   `json:"shortCode"`
 	Category     string   `json:"category"`
 	Processes    []string `json:"processes"`
+	ExePath      string   `json:"exePath,omitempty"`
 	PresetRanges []string `json:"presetRanges"`
 	IgnoreRanges []string `json:"ignoreRanges"`
 }
@@ -77,32 +92,46 @@ type CustomGame struct {
 type SeenServer struct {
 	IP       string `json:"ip"`
 	Port     int    `json:"port"`
-	Proto    string `json:"proto"` // "UDP" | "TCP"
-	Role     string `json:"role"`  // "Сервер рейда" | "Лобби / Матчмейкинг"
+	Proto    string `json:"proto"`  // "UDP" | "TCP"
+	Role     string `json:"role"`   // "Сервер рейда" | "Лобби / Матчмейкинг"
+	Region   string `json:"region"` // "Европа" | "Азия" | "США" | "СНГ"
 	DirectMs int    `json:"directMs"`
 	TunnelMs int    `json:"tunnelMs"`
 	Routed   bool   `json:"routed"`
+	Blocked  bool   `json:"blocked"`
 	LastSeen int64  `json:"lastSeen"`
 }
 
 type Settings struct {
-	ActiveGameID     string                  `json:"activeGameId"`
-	Protocol         string                  `json:"protocol"` // "auto" | "awg_quic" | "awg_dns" | "awg_sip" | "awg_junk" | "masque_h3" | "masque_h2" | "custom"
-	SelectedEndpoint string                  `json:"selectedEndpoint"`
-	MimicSNI         string                  `json:"mimicSni"`
-	MTU              int                     `json:"mtu"`
-	SubnetPrefix     int                     `json:"subnetPrefix"`
-	RaidProtection   bool                    `json:"raidProtection"`
-	AutoFailover     bool                    `json:"autoFailover"`
-	AutoLearn        bool                    `json:"autoLearn"`
-	CloseToTray      bool                    `json:"closeToTray"`
-	Warp             *WarpAccount            `json:"warp,omitempty"`
-	Masque           *MasqueAccount          `json:"masque,omitempty"`
-	CustomTunnel     *CustomTunnelConfig     `json:"customTunnel,omitempty"`
-	Nodes            []NodeInfo              `json:"nodes"`
-	CustomGames      []CustomGame            `json:"customGames"`
-	LearnedRanges    map[string][]string     `json:"learnedRanges"`
-	SeenServers      map[string][]SeenServer `json:"seenServers"`
+	ActiveGameID       string                  `json:"activeGameId"`
+	Protocol           string                  `json:"protocol"` // "auto" | "awg_quic" | "awg_dns" | "awg_sip" | "awg_junk" | "masque_h3" | "masque_h2" | "custom" | "proxy"
+	SelectedEndpoint   string                  `json:"selectedEndpoint"`
+	ActiveProxyID      string                  `json:"activeProxyId"`
+	SubscriptionURL    string                  `json:"subscriptionUrl"`
+	MimicSNI           string                  `json:"mimicSni"`
+	MTU                int                     `json:"mtu"`
+	SubnetPrefix       int                     `json:"subnetPrefix"`
+	RaidProtection     bool                    `json:"raidProtection"`
+	AutoFailover       bool                    `json:"autoFailover"`
+	AutoLearn          bool                    `json:"autoLearn"`
+	AutoBoost          bool                    `json:"autoBoost"`
+	AutoStopOnExit     bool                    `json:"autoStopOnExit"`
+	CloseToTray        bool                    `json:"closeToTray"`
+	StartWithWindows   bool                    `json:"startWithWindows"`
+	GlobalHotkey       bool                    `json:"globalHotkey"`
+	BlockHighPing      bool                    `json:"blockHighPing"`
+	MaxPingThresholdMs int                     `json:"maxPingThresholdMs"`
+	BlockedIPs         []string                `json:"blockedIps"`
+	Warp               *WarpAccount            `json:"warp,omitempty"`
+	Masque             *MasqueAccount          `json:"masque,omitempty"`
+	CustomTunnel       *CustomTunnelConfig     `json:"customTunnel,omitempty"`
+	Proxies            []ProxyNode             `json:"proxies"`
+	Nodes              []NodeInfo              `json:"nodes"`
+	CustomGames        []CustomGame            `json:"customGames"`
+	LearnedRanges      map[string][]string     `json:"learnedRanges"`
+	ExcludedRanges     map[string][]string     `json:"excludedRanges"`
+	ManualRanges       map[string][]string     `json:"manualRanges"`
+	SeenServers        map[string][]SeenServer `json:"seenServers"`
 }
 
 type Store struct {
@@ -126,20 +155,30 @@ func DataDir() string {
 
 func DefaultSettings() Settings {
 	return Settings{
-		ActiveGameID:     "abi",
-		Protocol:         "auto",
-		SelectedEndpoint: "auto",
-		MimicSNI:         "www.google.com",
-		MTU:              1280,
-		SubnetPrefix:     24,
-		RaidProtection:   true,
-		AutoFailover:     true,
-		AutoLearn:        true,
-		CloseToTray:      true,
-		Nodes:            []NodeInfo{},
-		CustomGames:      []CustomGame{},
-		LearnedRanges:    map[string][]string{},
-		SeenServers:      map[string][]SeenServer{},
+		ActiveGameID:       "abi",
+		Protocol:           "auto",
+		SelectedEndpoint:   "auto",
+		MimicSNI:           "www.google.com",
+		MTU:                1280,
+		SubnetPrefix:       24,
+		RaidProtection:     true,
+		AutoFailover:       true,
+		AutoLearn:          true,
+		AutoBoost:          false,
+		AutoStopOnExit:     false,
+		CloseToTray:        true,
+		StartWithWindows:   false,
+		GlobalHotkey:       true,
+		BlockHighPing:      false,
+		MaxPingThresholdMs: 120,
+		BlockedIPs:         []string{},
+		Proxies:            []ProxyNode{},
+		Nodes:              []NodeInfo{},
+		CustomGames:        []CustomGame{},
+		LearnedRanges:      map[string][]string{},
+		ExcludedRanges:     map[string][]string{},
+		ManualRanges:       map[string][]string{},
+		SeenServers:        map[string][]SeenServer{},
 	}
 }
 
@@ -177,11 +216,20 @@ func normalizeSettings(st *Settings) {
 	if st.MimicSNI == "" {
 		st.MimicSNI = "www.google.com"
 	}
-	if st.MTU < 1200 || st.MTU > 1420 {
+	if st.MTU < 1200 || st.MTU > 1440 {
 		st.MTU = 1280
 	}
 	if st.SubnetPrefix != 16 && st.SubnetPrefix != 20 && st.SubnetPrefix != 24 {
 		st.SubnetPrefix = 24
+	}
+	if st.MaxPingThresholdMs < 50 || st.MaxPingThresholdMs > 350 {
+		st.MaxPingThresholdMs = 120
+	}
+	if st.BlockedIPs == nil {
+		st.BlockedIPs = []string{}
+	}
+	if st.Proxies == nil {
+		st.Proxies = []ProxyNode{}
 	}
 	if st.Nodes == nil {
 		st.Nodes = []NodeInfo{}
@@ -191,6 +239,12 @@ func normalizeSettings(st *Settings) {
 	}
 	if st.LearnedRanges == nil {
 		st.LearnedRanges = map[string][]string{}
+	}
+	if st.ExcludedRanges == nil {
+		st.ExcludedRanges = map[string][]string{}
+	}
+	if st.ManualRanges == nil {
+		st.ManualRanges = map[string][]string{}
 	}
 	if st.SeenServers == nil {
 		st.SeenServers = map[string][]SeenServer{}

@@ -1,4 +1,4 @@
-import type { DashboardState, DiagReport } from '../types'
+import type { DashboardState, DiagReport, UpdateInfo } from '../types'
 
 declare global {
   interface Window {
@@ -15,7 +15,7 @@ declare global {
 }
 
 const fallbackState: DashboardState = {
-  version: '4.0.0',
+  version: '5.0.0',
   isAdmin: true,
   status: 'idle',
   statusText: 'Готов к ускорению в 1 клик',
@@ -33,65 +33,31 @@ const fallbackState: DashboardState = {
     presetRanges: ['43.174.251.0/24'],
     ignoreRanges: ['92.122.0.0/15'],
   },
-  catalog: [
-    {
-      id: 'abi',
-      name: 'Arena Breakout: Infinite',
-      shortCode: 'ABI',
-      category: 'Тактический экстракшен-шутер',
-      regionHint: 'Европа · Азия · Америка',
-      description: 'Точечный split-tunnel только для серверов лобби и рейдов. Остальной трафик ПК идёт напрямую.',
-      featured: true,
-      processes: ['UAGame.exe', 'ArenaBreakoutInfinite.exe'],
-      presetRanges: ['43.174.251.0/24'],
-      ignoreRanges: ['92.122.0.0/15'],
-    },
-    {
-      id: 'delta-force',
-      name: 'Delta Force',
-      shortCode: 'DF',
-      category: 'Тактический шутер',
-      regionHint: 'Европа · Франкфурт / Стокгольм',
-      description: 'Оптимизация маршрута к серверам Level Infinite и захват матчей ETW-радаром.',
-      processes: ['DeltaForceClient-Win64-Shipping.exe'],
-      presetRanges: ['43.153.253.0/24'],
-      ignoreRanges: ['92.122.0.0/15'],
-    },
-    {
-      id: 'eft',
-      name: 'Escape from Tarkov',
-      shortCode: 'EFT',
-      category: 'Хардкорный экстракшен',
-      regionHint: 'Европа · Хельсинки / Франкфурт',
-      description: 'Снижение потерь пакетов при входе в рейд.',
-      processes: ['EscapeFromTarkov.exe'],
-      presetRanges: ['92.223.80.0/24'],
-      ignoreRanges: [],
-    },
-    {
-      id: 'pubg',
-      name: 'PUBG: Battlegrounds',
-      shortCode: 'PUBG',
-      category: 'Королевская битва',
-      regionHint: 'Европа · AWS Франкфурт',
-      description: 'Прямой маршрут до европейских серверов.',
-      processes: ['TslGame.exe'],
-      presetRanges: ['3.64.0.0/16'],
-      ignoreRanges: [],
-    },
-  ],
+  catalog: [],
   settings: {
     activeGameId: 'abi',
     protocol: 'auto',
     selectedEndpoint: 'auto',
+    activeProxyId: '',
+    subscriptionUrl: '',
     mimicSni: 'www.google.com',
     mtu: 1280,
     subnetPrefix: 24,
     raidProtection: true,
     autoFailover: true,
     autoLearn: true,
+    autoBoost: false,
+    autoStopOnExit: false,
     closeToTray: true,
+    startWithWindows: false,
+    globalHotkey: true,
+    blockHighPing: false,
+    maxPingThresholdMs: 120,
+    blockedIps: [],
+    proxies: [],
     nodes: [],
+    manualRanges: {},
+    excludedRanges: {},
   },
   activeProtocol: 'auto',
   activeProtocolTitle: 'AmneziaWG 2.0 · QUIC (HTTP/3)',
@@ -119,6 +85,8 @@ const fallbackState: DashboardState = {
   tunnelStats: { rxBytes: 0, txBytes: 0, lastHandshakeSec: 0, connected: false },
   appliedRouteCount: 0,
   deferredRouteCount: 0,
+  effectiveRoutes: [],
+  updateInfo: { available: false, currentVer: '5.0.0', latestVer: '5.0.0', downloadUrl: '', releaseUrl: '', notes: '' },
   history: [],
   radar: { gameRunning: false, activePids: [], etwActive: true, hits: [] },
   servers: [],
@@ -138,10 +106,13 @@ export const Bridge = {
     const fn = appMethod('SelectGame')
     return fn ? await fn(gameId) : fallbackState
   },
+  async launchActiveGame(): Promise<void> {
+    const fn = appMethod('LaunchActiveGame')
+    if (fn) await fn()
+  },
   async addCustomGame(name: string, exes: string, subnets: string): Promise<DashboardState> {
     const fn = appMethod('AddCustomGame')
-    if (!fn) return fallbackState
-    return await fn(name, exes, subnets)
+    return fn ? await fn(name, exes, subnets) : fallbackState
   },
   async boostOneClick(gameId: string): Promise<void> {
     const fn = appMethod('BoostOneClick')
@@ -172,8 +143,73 @@ export const Bridge = {
       ? await fn(protocol, selectedEndpoint, raidProtection, autoFailover, autoLearn, subnetPrefix)
       : fallbackState
   },
+  async updateSystemPrefs(
+    autoBoost: boolean,
+    autoStop: boolean,
+    closeToTray: boolean,
+    startWithWin: boolean,
+    globalHotkey: boolean,
+    mtu: number
+  ): Promise<DashboardState> {
+    const fn = appMethod('UpdateSystemPrefs')
+    return fn ? await fn(autoBoost, autoStop, closeToTray, startWithWin, globalHotkey, mtu) : fallbackState
+  },
   async generateWarpProfile(): Promise<void> {
     const fn = appMethod('GenerateWarpProfile')
+    if (fn) await fn()
+  },
+  async applyWarpPlus(licenseKey: string): Promise<DashboardState> {
+    const fn = appMethod('ApplyWarpPlus')
+    return fn ? await fn(licenseKey) : fallbackState
+  },
+  async autoOptimizeMTU(): Promise<DashboardState> {
+    const fn = appMethod('AutoOptimizeMTU')
+    return fn ? await fn() : fallbackState
+  },
+  async addProxyLinks(rawText: string): Promise<DashboardState> {
+    const fn = appMethod('AddProxyLinks')
+    return fn ? await fn(rawText) : fallbackState
+  },
+  async syncSubscription(subUrl: string): Promise<DashboardState> {
+    const fn = appMethod('SyncSubscription')
+    return fn ? await fn(subUrl) : fallbackState
+  },
+  async selectProxy(proxyId: string): Promise<DashboardState> {
+    const fn = appMethod('SelectProxy')
+    return fn ? await fn(proxyId) : fallbackState
+  },
+  async deleteProxy(proxyId: string): Promise<DashboardState> {
+    const fn = appMethod('DeleteProxy')
+    return fn ? await fn(proxyId) : fallbackState
+  },
+  async setHighPingFilter(enabled: boolean, thresholdMs: number): Promise<DashboardState> {
+    const fn = appMethod('SetHighPingFilter')
+    return fn ? await fn(enabled, thresholdMs) : fallbackState
+  },
+  async toggleBlockServer(ip: string): Promise<DashboardState> {
+    const fn = appMethod('ToggleBlockServer')
+    return fn ? await fn(ip) : fallbackState
+  },
+  async clearBlockedServers(): Promise<DashboardState> {
+    const fn = appMethod('ClearBlockedServers')
+    return fn ? await fn() : fallbackState
+  },
+  async saveManualRoutes(manualLines: string, excludedLines: string): Promise<DashboardState> {
+    const fn = appMethod('SaveManualRoutes')
+    return fn ? await fn(manualLines, excludedLines) : fallbackState
+  },
+  async resetLearnedRoutes(): Promise<DashboardState> {
+    const fn = appMethod('ResetLearnedRoutes')
+    return fn ? await fn() : fallbackState
+  },
+  async checkUpdatesNow(): Promise<UpdateInfo> {
+    const fn = appMethod('CheckUpdatesNow')
+    return fn
+      ? await fn()
+      : { available: false, currentVer: '5.0.0', latestVer: '5.0.0', downloadUrl: '', releaseUrl: '', notes: '' }
+  },
+  async installUpdateNow(): Promise<void> {
+    const fn = appMethod('InstallUpdateNow')
     if (fn) await fn()
   },
   async importTunnelText(input: string, name: string): Promise<void> {
@@ -190,14 +226,10 @@ export const Bridge = {
   },
   async runDiagnostics(): Promise<DiagReport> {
     const fn = appMethod('RunDiagnostics')
-    if (fn) return await fn()
-    return { overallOk: true, summary: 'Готово', recommendation: '', steps: [] }
+    return fn ? await fn() : { overallOk: true, summary: 'Готово', recommendation: '', steps: [] }
   },
-  minimize() {
-    appMethod('WindowMinimize')?.()
-  },
-  toggleMax() {
-    appMethod('WindowToggleMax')?.()
+  hideToTray() {
+    appMethod('HideToTray')?.()
   },
   quit() {
     appMethod('QuitApp')?.()

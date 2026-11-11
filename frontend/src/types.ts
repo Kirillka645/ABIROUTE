@@ -26,6 +26,18 @@ export interface NodeInfo {
   score: number
 }
 
+export interface ProxyNode {
+  id: string
+  name: string
+  scheme: string
+  server: string
+  port: number
+  rawUri: string
+  pingMs: number
+  subUrl?: string
+  created: string
+}
+
 export interface WarpAccount {
   privateKey: string
   publicKey: string
@@ -33,6 +45,8 @@ export interface WarpAccount {
   ipv4: string
   ipv6: string
   deviceId: string
+  license?: string
+  warpPlus?: boolean
   created: string
   source: string
 }
@@ -49,16 +63,28 @@ export interface Settings {
   activeGameId: string
   protocol: string
   selectedEndpoint: string
+  activeProxyId: string
+  subscriptionUrl: string
   mimicSni: string
   mtu: number
   subnetPrefix: number
   raidProtection: boolean
   autoFailover: boolean
   autoLearn: boolean
+  autoBoost: boolean
+  autoStopOnExit: boolean
   closeToTray: boolean
+  startWithWindows: boolean
+  globalHotkey: boolean
+  blockHighPing: boolean
+  maxPingThresholdMs: number
+  blockedIps: string[]
   warp?: WarpAccount
   customTunnel?: CustomTunnelConfig
+  proxies: ProxyNode[]
   nodes: NodeInfo[]
+  manualRanges: Record<string, string[]>
+  excludedRanges: Record<string, string[]>
 }
 
 export interface RouteMetrics {
@@ -106,10 +132,21 @@ export interface SeenServer {
   port: number
   proto: string
   role: string
+  region: string
   directMs: number
   tunnelMs: number
   routed: boolean
+  blocked: boolean
   lastSeen: number
+}
+
+export interface UpdateInfo {
+  available: boolean
+  currentVer: string
+  latestVer: string
+  downloadUrl: string
+  releaseUrl: string
+  notes: string
 }
 
 export interface LogEntry {
@@ -135,6 +172,8 @@ export interface DashboardState {
   tunnelStats: TunnelStats
   appliedRouteCount: number
   deferredRouteCount: number
+  effectiveRoutes: string[]
+  updateInfo: UpdateInfo
   history: PingSample[]
   radar: RadarSnapshot
   servers: SeenServer[]

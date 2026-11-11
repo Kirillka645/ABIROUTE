@@ -5,8 +5,10 @@ package tunnel
 import (
 	_ "embed"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
+	"syscall"
 )
 
 //go:embed embed/wintun_amd64.dll
@@ -43,4 +45,8 @@ func EnsureWintunDLL() error {
 		outErr = os.WriteFile(sysDll, embeddedWintunDLL, 0o644)
 	})
 	return outErr
+}
+
+func setSysProcHide(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
 }

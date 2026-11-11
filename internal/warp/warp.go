@@ -280,6 +280,22 @@ func RegisterWireGuard(ctx context.Context) (*config.WarpAccount, error) {
 	}, nil
 }
 
+// ApplyWarpPlusLicense binds a WARP+ / Unlimited license key (from 1.1.1.1 app) to enable Cloudflare Argo Smart Routing.
+func ApplyWarpPlusLicense(ctx context.Context, acct *config.WarpAccount, license string) error {
+	license = strings.TrimSpace(license)
+	if license == "" {
+		return fmt.Errorf("введите лицензионный ключ WARP+")
+	}
+	if acct == nil || acct.DeviceID == "" || acct.Token == "" {
+		return fmt.Errorf("для привязки ключа WARP+ сначала зарегистрируйте профиль WARP кнопкой «Новый ключ WARP»")
+	}
+	body := map[string]any{"license": license}
+	if _, err := doWarpRequest(ctx, http.MethodPut, "/reg/"+acct.DeviceID+"/account", body, acct.Token); err != nil {
+		return fmt.Errorf("не удалось привязать ключ WARP+: %w", err)
+	}
+	return nil
+}
+
 // RegisterMASQUE registers a dedicated device and enrolls an ECDSA P-256 key for MASQUE HTTP/3 & HTTP/2,
 // keeping the WireGuard device untouched so protocol switching is instant.
 func RegisterMASQUE(ctx context.Context) (*config.MasqueAccount, error) {

@@ -13,49 +13,50 @@ export const RouteMap: React.FC<Props> = ({ boosted, node, metrics, gameShort, o
   const hop1 = metrics.hop1NodeMs > 0 ? `${metrics.hop1NodeMs} мс` : node.tunnelPingMs > 0 ? `${node.tunnelPingMs} мс` : '—'
   const hop2 = metrics.hop2GameMs > 0 ? `${metrics.hop2GameMs} мс` : boosted ? '~18 мс' : '—'
   const directTxt = metrics.directPingMs > 0 ? `напрямую: ${metrics.directPingMs} мс` : 'прямой канал провайдера'
-  const cityLabel = node.city && node.city !== '' ? `${node.city} (${node.coloCode || 'CF'})` : 'Автовыбор узла Cloudflare'
+  const cityLabel = node.city && node.city !== '' ? `${node.city} (${node.coloCode || 'CF'})` : 'Автовыбор узла'
   const epLabel = node.endpoint || 'Автоматический подбор'
   const targetLabel = metrics.targetServerIp || '43.174.251.100'
 
   return (
-    <div className="bg-[#131820] border border-white/[0.08] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] rounded-2xl p-5 flex flex-col justify-between">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <div className="text-[15px] font-bold tracking-tight text-[#f3f6fa]">Карта маршрута в реальном времени</div>
-          <div className="text-xs text-[#a1acbd]">Обход перегруженных стыков провайдера через защищённый узел</div>
+    <div className="bg-[#131820] border border-white/[0.08] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] rounded-2xl p-4 sm:p-5 flex flex-col justify-between min-w-0">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="min-w-0">
+          <div className="text-[15px] font-bold tracking-tight text-[#f3f6fa] truncate">Карта маршрута в реальном времени</div>
+          <div className="text-xs text-[#a1acbd] truncate">Обход перегруженных стыков провайдера через защищённый узел</div>
         </div>
         <button
           onClick={onChangeNode}
-          className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#19202b] hover:bg-[#202938] border border-white/[0.12] text-[#f3f6fa] transition active:scale-[0.98] cursor-pointer"
+          className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#19202b] hover:bg-[#202938] border border-white/[0.12] text-[#f3f6fa] transition active:scale-[0.98] shrink-0 cursor-pointer"
         >
           Сменить узел
         </button>
       </div>
 
-      <svg width="100%" height="154" viewBox="0 0 576 154" fill="none" className="mt-1">
-        {/* Direct ISP dashed path */}
+      <svg
+        viewBox="0 0 576 154"
+        preserveAspectRatio="xMidYMid meet"
+        fill="none"
+        className="w-full h-auto max-h-[154px] mt-1"
+      >
         <path
           d="M 68 86 Q 288 142 508 86"
           stroke={boosted ? 'rgba(255,255,255,0.16)' : 'rgba(245,158,11,0.55)'}
           strokeWidth="1.75"
           strokeDasharray="4 5"
         />
-        <rect x="212" y="110" width="152" height="22" rx="6" fill="#0d1015" stroke="rgba(255,255,255,0.12)" />
+        <rect x="206" y="110" width="164" height="22" rx="6" fill="#0d1015" stroke="rgba(255,255,255,0.12)" />
         <text x="288" y="125" textAnchor="middle" fill="#a1acbd" fontSize="11.5" className="font-mono-num">
           {directTxt}
         </text>
 
-        {/* Boosted curve */}
         <path
           d="M 68 80 Q 178 32 288 46 T 508 80"
           stroke={boosted ? '#22d37b' : 'rgba(255,255,255,0.14)'}
           strokeWidth={boosted ? '2.75' : '1.75'}
         />
 
-        {/* Animated live packet dot */}
         {boosted && <circle r="4" fill="#22d37b" className="packet-dot" />}
 
-        {/* Hop 1 latency pill */}
         <rect
           x="138"
           y="33"
@@ -77,7 +78,6 @@ export const RouteMap: React.FC<Props> = ({ boosted, node, metrics, gameShort, o
           {hop1}
         </text>
 
-        {/* Hop 2 latency pill */}
         <rect
           x="372"
           y="33"
@@ -99,7 +99,6 @@ export const RouteMap: React.FC<Props> = ({ boosted, node, metrics, gameShort, o
           {hop2}
         </text>
 
-        {/* Node 1: This PC */}
         <circle cx="68" cy="82" r="14" fill="#131820" stroke="#f3f6fa" strokeWidth="2" />
         <circle cx="68" cy="82" r="4.5" fill="#f3f6fa" />
         <text x="68" y="114" textAnchor="middle" fill="#f3f6fa" fontSize="12.5" fontWeight="600">
@@ -109,7 +108,6 @@ export const RouteMap: React.FC<Props> = ({ boosted, node, metrics, gameShort, o
           Роутер: {metrics.routerPingMs || 1} мс
         </text>
 
-        {/* Node 2: Relay Node */}
         <rect
           x="272"
           y="30"
@@ -128,7 +126,6 @@ export const RouteMap: React.FC<Props> = ({ boosted, node, metrics, gameShort, o
           {epLabel}
         </text>
 
-        {/* Node 3: Game Server */}
         <rect x="492" y="66" width="32" height="32" rx="8" fill="#131820" stroke="#f3f6fa" strokeWidth="2" />
         <rect x="503" y="77" width="10" height="10" rx="2" fill={boosted ? '#22d37b' : '#f59e0b'} />
         <text x="508" y="114" textAnchor="middle" fill="#f3f6fa" fontSize="12.5" fontWeight="600">

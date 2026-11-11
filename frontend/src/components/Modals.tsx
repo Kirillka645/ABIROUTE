@@ -34,63 +34,63 @@ export const AddGameModal: React.FC<{
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
       <form
         onSubmit={submit}
-        className="w-full max-w-[460px] bg-[#131820] border border-white/[0.12] rounded-2xl p-6 flex flex-col gap-4 shadow-2xl"
+        className="w-full max-w-[460px] bg-[#131820] border border-white/[0.12] rounded-2xl p-5 flex flex-col gap-3.5 shadow-2xl"
       >
         <div>
-          <h3 className="text-lg font-bold text-[#f3f6fa]">Добавить игру или приложение</h3>
+          <h3 className="text-base font-bold text-[#f3f6fa]">Добавить игру или приложение</h3>
           <p className="text-xs text-[#a1acbd] mt-1">
-            ETW-радар автоматически найдёт серверы выбранного процесса и пустит через туннель только их.
+            ETW-радар автоматически найдёт серверы процесса и пустит через туннель только их.
           </p>
         </div>
 
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-1">
           <label className="text-xs font-semibold text-[#a1acbd]">Название</label>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Например: Deadlock или Discord Voice"
-            className="px-3.5 py-2.5 rounded-xl bg-[#0d1015] border border-white/[0.1] text-sm text-[#f3f6fa] outline-none focus:border-[#22d37b]"
+            className="px-3 py-2 rounded-xl bg-[#0d1015] border border-white/[0.1] text-sm text-[#f3f6fa] outline-none focus:border-[#22d37b]"
           />
         </div>
 
-        <div className="flex flex-col gap-1.5">
-          <label className="text-xs font-semibold text-[#a1acbd]">Имена процессов (.exe через запятую)</label>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-[#a1acbd]">Процессы (.exe или полный путь к игре)</label>
           <input
             value={exes}
             onChange={(e) => setExes(e.target.value)}
             placeholder="project8.exe, Discord.exe"
-            className="px-3.5 py-2.5 rounded-xl bg-[#0d1015] border border-white/[0.1] text-sm text-[#f3f6fa] font-mono-num outline-none focus:border-[#22d37b]"
+            className="px-3 py-2 rounded-xl bg-[#0d1015] border border-white/[0.1] text-sm text-[#f3f6fa] font-mono-num outline-none focus:border-[#22d37b]"
           />
         </div>
 
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-1">
           <label className="text-xs font-semibold text-[#a1acbd]">Известные IP-диапазоны (необязательно)</label>
           <textarea
             rows={2}
             value={subnets}
             onChange={(e) => setSubnets(e.target.value)}
             placeholder="Оставьте пустым для автоматического поиска ETW-радаром"
-            className="px-3.5 py-2 rounded-xl bg-[#0d1015] border border-white/[0.1] text-xs text-[#f3f6fa] font-mono-num outline-none focus:border-[#22d37b] resize-none"
+            className="px-3 py-2 rounded-xl bg-[#0d1015] border border-white/[0.1] text-xs text-[#f3f6fa] font-mono-num outline-none focus:border-[#22d37b] resize-none"
           />
         </div>
 
         {err && <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">{err}</div>}
 
-        <div className="flex items-center justify-end gap-2.5 pt-1">
+        <div className="flex items-center justify-end gap-2 pt-1">
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 rounded-xl text-sm font-semibold bg-[#19202b] hover:bg-[#202938] border border-white/[0.1] cursor-pointer"
+            className="px-4 py-2 rounded-xl text-xs font-semibold bg-[#19202b] hover:bg-[#202938] border border-white/[0.1] cursor-pointer"
           >
             Отмена
           </button>
           <button
             type="submit"
             disabled={saving}
-            className="px-5 py-2 rounded-xl text-sm font-bold bg-[#22d37b] hover:bg-[#3ae08e] text-[#061b10] cursor-pointer active:scale-[0.98]"
+            className="px-5 py-2 rounded-xl text-xs font-bold bg-[#22d37b] hover:bg-[#3ae08e] text-[#061b10] cursor-pointer active:scale-[0.98]"
           >
             {saving ? 'Сохранение…' : 'Добавить'}
           </button>
@@ -103,23 +103,30 @@ export const AddGameModal: React.FC<{
 export const ImportModal: React.FC<{
   open: boolean
   onClose: () => void
-}> = ({ open, onClose }) => {
+  onUpdated: (st: DashboardState) => void
+}> = ({ open, onClose, onUpdated }) => {
   const [text, setText] = useState('')
   const [name, setName] = useState('')
   const [err, setErr] = useState('')
+  const [loading, setLoading] = useState(false)
 
   if (!open) return null
 
   const handlePasteImport = async (e: React.FormEvent) => {
     e.preventDefault()
     setErr('')
+    setLoading(true)
     try {
       await Bridge.importTunnelText(text, name)
+      const st = await Bridge.getState()
+      onUpdated(st)
       setText('')
       setName('')
       onClose()
     } catch (ex: any) {
-      setErr(typeof ex === 'string' ? ex : ex?.message || 'Не удалось разобрать конфиг')
+      setErr(typeof ex === 'string' ? ex : ex?.message || 'Не удалось разобрать ключ или конфиг')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -127,6 +134,8 @@ export const ImportModal: React.FC<{
     setErr('')
     try {
       await Bridge.importConfFile()
+      const st = await Bridge.getState()
+      onUpdated(st)
       onClose()
     } catch (ex: any) {
       if (ex) setErr(typeof ex === 'string' ? ex : ex?.message || 'Ошибка чтения файла')
@@ -134,64 +143,67 @@ export const ImportModal: React.FC<{
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
       <form
         onSubmit={handlePasteImport}
-        className="w-full max-w-[500px] bg-[#131820] border border-white/[0.12] rounded-2xl p-6 flex flex-col gap-4 shadow-2xl"
+        className="w-full max-w-[520px] bg-[#131820] border border-white/[0.12] rounded-2xl p-5 flex flex-col gap-3.5 shadow-2xl"
       >
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h3 className="text-lg font-bold text-[#f3f6fa]">Импорт своего сервера или ключа WARP</h3>
+            <h3 className="text-base font-bold text-[#f3f6fa]">Универсальный импорт ключей и подписок</h3>
             <p className="text-xs text-[#a1acbd] mt-1">
-              Поддерживаются файлы <span className="font-mono-num">.conf</span> (AmneziaWG / WireGuard) и ссылки <span className="font-mono-num">vpn://</span>.
+              Поддерживаются <span className="font-mono-num text-[#22d37b]">vless://</span>,{' '}
+              <span className="font-mono-num text-[#22d37b]">hy2://</span>, <span className="font-mono-num">trojan://</span>,{' '}
+              <span className="font-mono-num">ss://</span>, подписки <span className="font-mono-num">https://</span>, ссылки{' '}
+              <span className="font-mono-num">vpn://</span> и файлы <span className="font-mono-num">.conf</span>.
             </p>
           </div>
           <button
             type="button"
             onClick={handleFileImport}
-            className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-[#19202b] hover:bg-[#202938] border border-white/[0.14] whitespace-nowrap cursor-pointer"
+            className="px-3 py-2 rounded-xl text-xs font-semibold bg-[#19202b] hover:bg-[#202938] border border-white/[0.14] whitespace-nowrap cursor-pointer"
           >
-            Выбрать .conf файл
+            Файл .conf
           </button>
         </div>
 
-        <div className="flex flex-col gap-1.5">
-          <label className="text-xs font-semibold text-[#a1acbd]">Название сервера (необязательно)</label>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-[#a1acbd]">Название (для .conf без тега)</label>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Например: Мой VPS Германия"
-            className="px-3.5 py-2 rounded-xl bg-[#0d1015] border border-white/[0.1] text-sm text-[#f3f6fa] outline-none focus:border-[#22d37b]"
+            placeholder="Например: Мой VPS Франкфурт"
+            className="px-3 py-2 rounded-xl bg-[#0d1015] border border-white/[0.1] text-sm text-[#f3f6fa] outline-none focus:border-[#22d37b]"
           />
         </div>
 
-        <div className="flex flex-col gap-1.5">
-          <label className="text-xs font-semibold text-[#a1acbd]">Текст конфига или ключ vpn://</label>
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-semibold text-[#a1acbd]">Ключи, ссылка подписки или текст конфига</label>
           <textarea
             rows={5}
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder="Вставьте сюда vpn://... или содержимое файла [Interface] / [Peer]"
-            className="px-3.5 py-2.5 rounded-xl bg-[#0d1015] border border-white/[0.1] text-xs text-[#f3f6fa] font-mono-num outline-none focus:border-[#22d37b] resize-none"
+            placeholder={'vless://...\nhy2://...\nhttps://sub.example.com/api/v1/client/subscribe?token=...\nили [Interface] / vpn://...'}
+            className="px-3 py-2 rounded-xl bg-[#0d1015] border border-white/[0.1] text-xs text-[#f3f6fa] font-mono-num outline-none focus:border-[#22d37b] resize-none"
           />
         </div>
 
         {err && <div className="text-xs text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">{err}</div>}
 
-        <div className="flex items-center justify-end gap-2.5 pt-1">
+        <div className="flex items-center justify-end gap-2 pt-1">
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 rounded-xl text-sm font-semibold bg-[#19202b] hover:bg-[#202938] border border-white/[0.1] cursor-pointer"
+            className="px-4 py-2 rounded-xl text-xs font-semibold bg-[#19202b] hover:bg-[#202938] border border-white/[0.1] cursor-pointer"
           >
             Закрыть
           </button>
           <button
             type="submit"
-            disabled={!text.trim()}
-            className="px-5 py-2 rounded-xl text-sm font-bold bg-[#22d37b] hover:bg-[#3ae08e] disabled:opacity-40 text-[#061b10] cursor-pointer"
+            disabled={!text.trim() || loading}
+            className="px-5 py-2 rounded-xl text-xs font-bold bg-[#22d37b] hover:bg-[#3ae08e] disabled:opacity-40 text-[#061b10] cursor-pointer"
           >
-            Импортировать
+            {loading ? 'Проверка и загрузка…' : 'Импортировать'}
           </button>
         </div>
       </form>
@@ -199,44 +211,98 @@ export const ImportModal: React.FC<{
   )
 }
 
-export const CloseModal: React.FC<{
+export const RouteEditorModal: React.FC<{
   open: boolean
+  gameName: string
+  initialManual: string[]
+  initialExcluded: string[]
   onClose: () => void
-  onMinimize: () => void
-  onStopAndQuit: () => void
-}> = ({ open, onClose, onMinimize, onStopAndQuit }) => {
+  onSaved: (st: DashboardState) => void
+}> = ({ open, gameName, initialManual, initialExcluded, onClose, onSaved }) => {
+  const [manual, setManual] = useState(() => (initialManual || []).join('\n'))
+  const [excl, setExcl] = useState(() => (initialExcluded || []).join('\n'))
+
+  React.useEffect(() => {
+    setManual((initialManual || []).join('\n'))
+    setExcl((initialExcluded || []).join('\n'))
+  }, [open, initialManual, initialExcluded])
+
   if (!open) return null
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const next = await Bridge.saveManualRoutes(manual, excl)
+    onSaved(next)
+    onClose()
+  }
+
+  const resetLearned = async () => {
+    const next = await Bridge.resetLearnedRoutes()
+    onSaved(next)
+  }
+
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
-      <div className="w-full max-w-[430px] bg-[#131820] border border-white/[0.12] rounded-2xl p-6 flex flex-col gap-4 shadow-2xl">
-        <div>
-          <h3 className="text-lg font-bold text-[#f3f6fa]">Ускорение игры сейчас активно</h3>
-          <p className="text-xs text-[#a1acbd] mt-1">
-            Вы можете свернуть окно, чтобы туннель, защита рейда и ETW-радар продолжали работать в фоне.
-          </p>
+    <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+      <form
+        onSubmit={save}
+        className="w-full max-w-[520px] bg-[#131820] border border-white/[0.12] rounded-2xl p-5 flex flex-col gap-3.5 shadow-2xl"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-base font-bold text-[#f3f6fa]">Редактор подсетей — {gameName}</h3>
+            <p className="text-xs text-[#a1acbd] mt-1">
+              Добавьте дополнительные IP/подсети в туннель или исключите адреса, которые должны идти напрямую.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={resetLearned}
+            className="px-3 py-1.5 rounded-xl text-[11px] font-semibold bg-amber-500/15 border border-amber-500/35 text-amber-300 whitespace-nowrap cursor-pointer"
+          >
+            Сбросить радар
+          </button>
         </div>
 
-        <div className="flex flex-col gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-[#22d37b]">Дополнительные подсети в туннель</label>
+            <textarea
+              rows={5}
+              value={manual}
+              onChange={(e) => setManual(e.target.value)}
+              placeholder={'43.174.251.0/24\n185.136.168.0/24'}
+              className="px-3 py-2 rounded-xl bg-[#0d1015] border border-white/[0.1] text-xs text-[#f3f6fa] font-mono-num outline-none focus:border-[#22d37b] resize-none"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-amber-300">Исключения (всегда напрямую)</label>
+            <textarea
+              rows={5}
+              value={excl}
+              onChange={(e) => setExcl(e.target.value)}
+              placeholder={'92.122.0.0/15\nCDN или лаунчер'}
+              className="px-3 py-2 rounded-xl bg-[#0d1015] border border-white/[0.1] text-xs text-[#f3f6fa] font-mono-num outline-none focus:border-[#22d37b] resize-none"
+            />
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 pt-1">
           <button
-            onClick={onMinimize}
-            className="w-full py-2.5 rounded-xl text-sm font-bold bg-[#22d37b] hover:bg-[#3ae08e] text-[#061b10] cursor-pointer"
-          >
-            Свернуть окно (оставить туннель включённым)
-          </button>
-          <button
-            onClick={onStopAndQuit}
-            className="w-full py-2.5 rounded-xl text-sm font-semibold bg-red-500/15 hover:bg-red-500/25 border border-red-500/35 text-red-300 cursor-pointer"
-          >
-            Выключить ускорение и выйти
-          </button>
-          <button
+            type="button"
             onClick={onClose}
-            className="w-full py-2 rounded-xl text-xs font-semibold text-[#a1acbd] hover:text-[#f3f6fa] cursor-pointer"
+            className="px-4 py-2 rounded-xl text-xs font-semibold bg-[#19202b] hover:bg-[#202938] border border-white/[0.1] cursor-pointer"
           >
             Отмена
           </button>
+          <button
+            type="submit"
+            className="px-5 py-2 rounded-xl text-xs font-bold bg-[#22d37b] hover:bg-[#3ae08e] text-[#061b10] cursor-pointer"
+          >
+            Сохранить маршруты
+          </button>
         </div>
-      </div>
+      </form>
     </div>
   )
 }

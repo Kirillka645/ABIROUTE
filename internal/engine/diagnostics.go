@@ -94,7 +94,7 @@ func (e *Engine) RunDiagnostics() DiagReport {
 		Step:   2,
 		Title:  "Профиль и обход DPI",
 		Status: "ok",
-		Detail: fmt.Sprintf("Ключ активен · режим %s", protocolLabel(st.Protocol)),
+		Detail: fmt.Sprintf("Ключ активен · режим %s", protocolLabel(st.Protocol, st)),
 	})
 
 	// Step 3: Cloudflare Edge Node Reachability (AWG QUIC vs MASQUE :443)
