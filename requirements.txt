@@ -1,2 +1,0 @@
-cryptography>=42
-psutil>=5.9

@@ -1,49 +1,75 @@
-name: build
+name: Build ABI Route 4.0
 
 on:
   push:
-    branches: [main]
-    tags: ['v*']
+    branches: ["main", "master", "v4*"]
   pull_request:
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  build:
+  build-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Setup Go
+        uses: actions/setup-go@v5
         with:
-          python-version: "3.12"
+          go-version-file: "go.mod"
 
-      - name: Install dependencies
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Ensure signed wintun.dll
+        shell: pwsh
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt pyinstaller
+          if (-not (Test-Path "internal/tunnel/embed/wintun_amd64.dll")) {
+            New-Item -ItemType Directory -Force -Path "internal/tunnel/embed" | Out-Null
+            Invoke-WebRequest -Uri "https://www.wintun.net/builds/wintun-0.14.1.zip" -OutFile "$env:TEMP\wintun.zip"
+            Expand-Archive -Path "$env:TEMP\wintun.zip" -DestinationPath "$env:TEMP\wintun" -Force
+            Copy-Item "$env:TEMP\wintun\wintun\bin\amd64\wintun.dll" "internal/tunnel/embed/wintun_amd64.dll" -Force
+          }
 
-      - name: Build exe
-        run: pyinstaller --noconfirm --clean ABIRoute.spec
+      - name: Build Frontend (React + TypeScript + Tailwind)
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
 
-      - name: Upload artifact (каждый пуш)
+      - name: Compile Windows Icon & UAC Manifest Resource
+        shell: pwsh
+        run: |
+          if (Get-Command windres -ErrorAction SilentlyContinue) {
+            Push-Location winres
+            windres -i abiroute.rc -o ../rsrc_windows_amd64.syso -O coff
+            Pop-Location
+          }
+
+      - name: Run Go Unit Tests
+        run: go test -v ./...
+
+      - name: Build ABIRoute.exe
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          go build -tags "desktop,production" -trimpath -ldflags "-s -w -H windowsgui" -o dist/ABIRoute.exe .
+
+      - name: Self-Test Compiled Executable
+        shell: pwsh
+        run: |
+          $env:__COMPAT_LAYER = "RunAsInvoker"
+          $out = "$env:TEMP\selftest.json"
+          $p = Start-Process -FilePath ".\dist\ABIRoute.exe" -ArgumentList @("--selftest", $out) -PassThru -Wait
+          if ($p.ExitCode -ne 0) { throw "Selftest exited with code $($p.ExitCode)" }
+          Get-Content $out
+
+      - name: Upload ABIRoute Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ABIRoute
           path: dist/ABIRoute.exe
-
-      - name: Create release (на теге v*)
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
-            gh release upload "${{ github.ref_name }}" dist/ABIRoute.exe --clobber
-          else
-            gh release create "${{ github.ref_name }}" dist/ABIRoute.exe `
-              --title "ABI Route ${{ github.ref_name }}" `
-              --generate-notes
-          fi

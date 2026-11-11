@@ -2,47 +2,45 @@
 setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
-rem --- find a Python that really starts (skip broken launchers) ---
-set "PY="
-for %%C in ("python" "py -3.13" "py -3.12" "py -3.11" "py -3" "py") do (
-  if not defined PY (
-    %%~C -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" >nul 2>nul && set "PY=%%~C"
-  )
-)
-if not defined PY (
-  for /d %%D in ("%LocalAppData%\Programs\Python\Python3*" "%ProgramFiles%\Python3*" "%LocalAppData%\Python\pythoncore-3*") do (
-    if not defined PY if exist "%%~D\python.exe" (
-      "%%~D\python.exe" -c "import sys" >nul 2>nul && set "PY="%%~D\python.exe""
-    )
-  )
-)
-if not defined PY (
-  echo [!] No working Python found.
-  echo     Install Python 3.12 from https://www.python.org/downloads/
-  echo     and tick "Add python.exe to PATH" during setup. Then run this file again.
+echo === [1/4] Checking Go and Node.js ===
+where go >nul 2>nul || (
+  echo [!] Go 1.24+ not found. Install from https://go.dev/dl/
   pause
   exit /b 1
 )
-echo Using Python: !PY!
-!PY! --version
+where npm >nul 2>nul || (
+  echo [!] Node.js / npm not found. Install from https://nodejs.org/
+  pause
+  exit /b 1
+)
 
-echo === Installing dependencies ===
-!PY! -m pip --version >nul 2>nul || !PY! -m ensurepip --upgrade
-!PY! -m pip install --upgrade pip
-!PY! -m pip install -r requirements.txt pyinstaller
+echo === [2/4] Building React + Tailwind UI ===
+pushd frontend
+call npm install --no-audit --no-fund
+if errorlevel 1 ( popd & goto fail )
+call npm run build
+if errorlevel 1 ( popd & goto fail )
+popd
+
+echo === [3/4] Compiling Windows resources and running tests ===
+where windres >nul 2>nul && (
+  pushd winres
+  windres -i abiroute.rc -o ..\rsrc_windows_amd64.syso -O coff
+  popd
+)
+go test ./...
 if errorlevel 1 goto fail
 
-echo === Building ABIRoute.exe ===
-!PY! -m PyInstaller --noconfirm --clean --onefile --windowed --uac-admin --name ABIRoute --icon icon.ico --add-data "icon.ico;." abi_route.py
+echo === [4/4] Building dist\ABIRoute.exe ===
+if not exist dist mkdir dist
+go build -tags "desktop,production" -trimpath -ldflags "-s -w -H windowsgui" -o dist\ABIRoute.exe .
 if errorlevel 1 goto fail
 
 echo.
 echo DONE: %~dp0dist\ABIRoute.exe
-pause
 exit /b 0
 
 :fail
 echo.
-echo [!] Build failed. Send the text above to get help.
-pause
+echo [!] Build failed.
 exit /b 1
